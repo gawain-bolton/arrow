@@ -21,10 +21,12 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <iostream>  // tmp
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "arrow/util/optional.h"
 #include "arrow/util/string_view.h"
 #include "parquet/column_writer.h"
 #include "parquet/file_writer.h"
@@ -45,10 +47,13 @@ namespace parquet {
 /// user can create new row groups by calling the EndRowGroup()
 /// function or using the EndRowGroup output manipulator.
 ///
-/// Currently there is no support for optional or repeated fields.
+/// Currently there is no support for repeated fields.
 ///
 class PARQUET_EXPORT StreamWriter {
  public:
+  template <typename T>
+  using optional = arrow::util::optional<T>;
+
   // N.B. Default constructed objects are not usable.  This
   //      constructor is provided so that the object may be move
   //      assigned afterwards.
@@ -61,6 +66,10 @@ class PARQUET_EXPORT StreamWriter {
   static void SetDefaultMaxRowGroupSize(int64_t max_size);
 
   void SetMaxRowGroupSize(int64_t max_size);
+
+  int current_column() const { return column_index_; }
+
+  int64_t current_row() const { return current_row_; }
 
   // Moving is possible.
   StreamWriter(StreamWriter&&) = default;
@@ -125,20 +134,38 @@ class PARQUET_EXPORT StreamWriter {
 
   // Output operators for variable length strings.
   StreamWriter& operator<<(const char* v);
+  StreamWriter& operator<<(const std::string& v);
   StreamWriter& operator<<(arrow::util::string_view v);
 
-  // Terminate the current row and advance to next one.
+  // Output operator for optional fields.
+  template <typename T>
+  StreamWriter& operator<<(optional<T> v) {
+    if (v) {
+      return operator<<(*v);
+    }
+    SkipColumns(1);
+    return *this;
+  }
+
+  /// \brief Skip the next N columns of optional data.
+  /// \return Number of columns actually skipped.
+  int64_t SkipColumns(int num_columns_to_skip);
+
+  /// \brief Terminate the current row and advance to next one.
   void EndRow();
 
-  // Terminate the current row group and create new one.
+  /// \brief Terminate the current row group and create new one.
   void EndRowGroup();
 
  protected:
   template <typename WriterType, typename T>
   StreamWriter& Write(const T v) {
+    std::cout << "Writing column: " << column_index_ << std::endl;
     auto writer = static_cast<WriterType*>(row_group_writer_->column(column_index_++));
+    int16_t def_level = 1;
+    int16_t rep_level = 0;
 
-    writer->WriteBatch(1, NULLPTR, NULLPTR, &v);
+    writer->WriteBatch(1, &def_level, &rep_level, &v);
 
     if (max_row_group_size_ > 0) {
       row_group_size_ += writer->EstimatedBufferedValueBytes();
@@ -163,6 +190,7 @@ class PARQUET_EXPORT StreamWriter {
   int64_t row_group_size_{0};
   int64_t max_row_group_size_{default_row_group_size_};
   int32_t column_index_{0};
+  int64_t current_row_{0};
   std::unique_ptr<ParquetFileWriter> file_writer_;
   std::unique_ptr<RowGroupWriter, null_deleter> row_group_writer_;
   std::vector<node_ptr_type> nodes_;

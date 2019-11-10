@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "arrow/util/optional.h"
 #include "parquet/column_reader.h"
 #include "parquet/file_reader.h"
 #include "parquet/stream_writer.h"
@@ -41,10 +42,13 @@ namespace parquet {
 /// The user must explicitly advance to the next row using the
 /// EndRow() function or EndRow input manipulator.
 ///
-/// Currently there is no support for optional or repeated fields.
+/// Currently there is no support for repeated fields.
 ///
 class PARQUET_EXPORT StreamReader {
  public:
+  template <typename T>
+  using optional = arrow::util::optional<T>;
+
   // N.B. Default constructed objects are not usable.  This
   //      constructor is provided so that the object may be move
   //      assigned afterwards.
@@ -119,7 +123,45 @@ class PARQUET_EXPORT StreamReader {
 
   StreamReader& operator>>(std::string& v);
 
-  // Terminate current row and advance to next one.
+  // Input operators for optional fields.
+
+  StreamReader& operator>>(optional<bool>& v);
+
+  StreamReader& operator>>(optional<int8_t>& v);
+
+  StreamReader& operator>>(optional<uint8_t>& v);
+
+  StreamReader& operator>>(optional<int16_t>& v);
+
+  StreamReader& operator>>(optional<uint16_t>& v);
+
+  StreamReader& operator>>(optional<int32_t>& v);
+
+  StreamReader& operator>>(optional<uint32_t>& v);
+
+  StreamReader& operator>>(optional<int64_t>& v);
+
+  StreamReader& operator>>(optional<uint64_t>& v);
+
+  StreamReader& operator>>(optional<float>& v);
+
+  StreamReader& operator>>(optional<double>& v);
+
+  StreamReader& operator>>(optional<std::chrono::milliseconds>& v);
+
+  StreamReader& operator>>(optional<std::chrono::microseconds>& v);
+
+  StreamReader& operator>>(optional<char>& v);
+
+  StreamReader& operator>>(optional<std::string>& v);
+
+  template <std::size_t N>
+  StreamReader& operator>>(optional<std::array<char, N>>& v) {
+    ReadFixedLength(v.data(), static_cast<int>(N));  // *** FIX ME ***
+    return *this;
+  }
+
+  /// \brief Terminate current row and advance to next one.
   void EndRow();
 
   /// \brief Skip the data in the next columns.
@@ -140,17 +182,76 @@ class PARQUET_EXPORT StreamReader {
   int64_t SkipRows(int64_t num_rows_to_skip);
 
  protected:
-  template <typename ReaderType, typename T>
+  template <typename ReaderType, typename T, typename U = T>
   void Read(T* v) {
     const auto& node = nodes_[column_index_];
     auto reader = static_cast<ReaderType*>(column_readers_[column_index_++].get());
-
+    int16_t def_level;
+    int16_t rep_level;
     int64_t values_read;
 
-    reader->ReadBatch(1, NULLPTR, NULLPTR, v, &values_read);
+    reader->ReadBatch(1, &def_level, &rep_level, reinterpret_cast<U*>(v), &values_read);
 
     if (values_read != 1) {
       throw ParquetException("Failed to read value for column '" + node->name() + "'");
+    }
+  }
+
+  template <typename T>
+  void Read(T* v) {
+    const auto& node = nodes_[column_index_];
+    auto reader = static_cast<Int32Reader*>(column_readers_[column_index_++].get());
+    int16_t def_level;
+    int16_t rep_level;
+    int32_t tmp;
+    int64_t values_read;
+
+    reader->ReadBatch(1, &def_level, &rep_level, &tmp, &values_read);
+
+    if (values_read == 1) {
+      *v = tmp;
+    } else {
+      throw ParquetException("Failed to read value for column '" + node->name() + "'");
+    }
+  }
+
+  template <typename ReaderType, typename T, typename U = T>
+  void ReadOptional(optional<T>& v) {
+    const auto& node = nodes_[column_index_];
+    auto reader = static_cast<ReaderType*>(column_readers_[column_index_++].get());
+    int16_t def_level;
+    int16_t rep_level;
+    U tmp;
+    int64_t values_read;
+
+    reader->ReadBatch(1, &def_level, &rep_level, &tmp, &values_read);
+
+    if (values_read == 1) {
+      v = T(tmp);
+    } else if (values_read == 0) {
+      v.reset();
+    } else {
+      throw ParquetException("Failed to read column '" + node->name() + "'");
+    }
+  }
+
+  template <typename T>
+  void ReadOptional(optional<T>& v) {
+    const auto& node = nodes_[column_index_];
+    auto reader = static_cast<Int32Reader*>(column_readers_[column_index_++].get());
+    int16_t def_level;
+    int16_t rep_level;
+    int32_t tmp;
+    int64_t values_read;
+
+    reader->ReadBatch(1, &def_level, &rep_level, &tmp, &values_read);
+
+    if (values_read == 1) {
+      v = T(tmp);
+    } else if (values_read == 0) {
+      v.reset();
+    } else {
+      throw ParquetException("Failed to read column '" + node->name() + "'");
     }
   }
 
@@ -159,6 +260,10 @@ class PARQUET_EXPORT StreamReader {
   void Read(ByteArray* v);
 
   void Read(FixedLenByteArray* v);
+
+  bool ReadOptional(ByteArray* v);
+
+  bool ReadOptional(FixedLenByteArray* v);
 
   void NextRowGroup();
 

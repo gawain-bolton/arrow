@@ -60,33 +60,25 @@ StreamReader& StreamReader::operator>>(bool& v) {
 
 StreamReader& StreamReader::operator>>(int8_t& v) {
   CheckColumn(Type::INT32, ConvertedType::INT_8);
-  int32_t tmp;
-  Read<Int32Reader>(&tmp);
-  v = static_cast<int8_t>(tmp);
+  Read(&v);
   return *this;
 }
 
 StreamReader& StreamReader::operator>>(uint8_t& v) {
   CheckColumn(Type::INT32, ConvertedType::UINT_8);
-  int32_t tmp;
-  Read<Int32Reader>(&tmp);
-  v = static_cast<uint8_t>(tmp);
+  Read(&v);
   return *this;
 }
 
 StreamReader& StreamReader::operator>>(int16_t& v) {
   CheckColumn(Type::INT32, ConvertedType::INT_16);
-  int32_t tmp;
-  Read<Int32Reader>(&tmp);
-  v = static_cast<int16_t>(tmp);
+  Read(&v);
   return *this;
 }
 
 StreamReader& StreamReader::operator>>(uint16_t& v) {
   CheckColumn(Type::INT32, ConvertedType::UINT_16);
-  int32_t tmp;
-  Read<Int32Reader>(&tmp);
-  v = static_cast<uint16_t>(tmp);
+  Read(&v);
   return *this;
 }
 
@@ -98,7 +90,7 @@ StreamReader& StreamReader::operator>>(int32_t& v) {
 
 StreamReader& StreamReader::operator>>(uint32_t& v) {
   CheckColumn(Type::INT32, ConvertedType::UINT_32);
-  Read<Int32Reader>(reinterpret_cast<int32_t*>(&v));
+  Read<Int32Reader, uint32_t, int32_t>(&v);
   return *this;
 }
 
@@ -110,7 +102,7 @@ StreamReader& StreamReader::operator>>(int64_t& v) {
 
 StreamReader& StreamReader::operator>>(uint64_t& v) {
   CheckColumn(Type::INT64, ConvertedType::UINT_64);
-  Read<Int64Reader>(reinterpret_cast<int64_t*>(&v));
+  Read<Int64Reader, uint64_t, int64_t>(&v);
   return *this;
 }
 
@@ -145,6 +137,7 @@ StreamReader& StreamReader::operator>>(double& v) {
 StreamReader& StreamReader::operator>>(char& v) {
   CheckColumn(Type::FIXED_LEN_BYTE_ARRAY, ConvertedType::NONE, 1);
   FixedLenByteArray flba;
+
   Read(&flba);
   v = static_cast<char>(flba.ptr[0]);
   return *this;
@@ -153,8 +146,99 @@ StreamReader& StreamReader::operator>>(char& v) {
 StreamReader& StreamReader::operator>>(std::string& v) {
   CheckColumn(Type::BYTE_ARRAY, ConvertedType::UTF8);
   ByteArray ba;
+
   Read(&ba);
   v = std::string(reinterpret_cast<const char*>(ba.ptr), ba.len);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<bool>& v) {
+  CheckColumn(Type::BOOLEAN, ConvertedType::NONE);
+  ReadOptional<BoolReader>(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<int8_t>& v) {
+  CheckColumn(Type::INT32, ConvertedType::INT_8);
+  ReadOptional(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<uint8_t>& v) {
+  CheckColumn(Type::INT32, ConvertedType::UINT_8);
+  ReadOptional(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<int16_t>& v) {
+  CheckColumn(Type::INT32, ConvertedType::INT_16);
+  ReadOptional(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<uint16_t>& v) {
+  CheckColumn(Type::INT32, ConvertedType::UINT_16);
+  ReadOptional(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<int32_t>& v) {
+  CheckColumn(Type::INT32, ConvertedType::INT_32);
+  ReadOptional(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<uint32_t>& v) {
+  CheckColumn(Type::INT32, ConvertedType::UINT_32);
+  ReadOptional(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<int64_t>& v) {
+  CheckColumn(Type::INT64, ConvertedType::INT_64);
+  ReadOptional<Int64Reader>(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<uint64_t>& v) {
+  CheckColumn(Type::INT64, ConvertedType::UINT_64);
+  ReadOptional<Int64Reader, uint64_t, int64_t>(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<std::chrono::milliseconds>& v) {
+  CheckColumn(Type::INT64, ConvertedType::TIMESTAMP_MILLIS);
+  ReadOptional<Int64Reader, std::chrono::milliseconds, int64_t>(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<std::chrono::microseconds>& v) {
+  CheckColumn(Type::INT64, ConvertedType::TIMESTAMP_MICROS);
+  ReadOptional<Int64Reader, std::chrono::microseconds, int64_t>(v);
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<char>& v) {
+  CheckColumn(Type::FIXED_LEN_BYTE_ARRAY, ConvertedType::NONE, 1);
+  FixedLenByteArray flba;
+
+  if (ReadOptional(&flba)) {
+    v = static_cast<char>(flba.ptr[0]);
+  } else {
+    v.reset();
+  }
+  return *this;
+}
+
+StreamReader& StreamReader::operator>>(optional<std::string>& v) {
+  CheckColumn(Type::BYTE_ARRAY, ConvertedType::UTF8);
+  ByteArray ba;
+
+  if (ReadOptional(&ba)) {
+    v = std::string(reinterpret_cast<const char*>(ba.ptr), ba.len);
+  } else {
+    v.reset();
+  }
   return *this;
 }
 
@@ -168,12 +252,30 @@ void StreamReader::ReadFixedLength(char* ptr, int len) {
 void StreamReader::Read(ByteArray* v) {
   const auto& node = nodes_[column_index_];
   auto reader = static_cast<ByteArrayReader*>(column_readers_[column_index_++].get());
+  int16_t def_level;
   int64_t values_read;
 
-  reader->ReadBatch(1, nullptr, nullptr, v, &values_read);
+  reader->ReadBatch(1, &def_level, nullptr, v, &values_read);
 
   if (values_read != 1) {
-    throw ParquetException("Failed to read value for column '" + node->name() + "'");
+    throw ParquetException("Failed to read column '" + node->name() + "'");
+  }
+}
+
+bool StreamReader::ReadOptional(ByteArray* v) {
+  const auto& node = nodes_[column_index_];
+  auto reader = static_cast<ByteArrayReader*>(column_readers_[column_index_++].get());
+  int16_t def_level;
+  int64_t values_read;
+
+  reader->ReadBatch(1, &def_level, nullptr, v, &values_read);
+
+  if (values_read == 1) {
+    return true;
+  } else if (values_read == 0) {
+    return false;
+  } else {
+    throw ParquetException("Failed to read column '" + node->name() + "'");
   }
 }
 
@@ -181,12 +283,31 @@ void StreamReader::Read(FixedLenByteArray* v) {
   const auto& node = nodes_[column_index_];
   auto reader =
       static_cast<FixedLenByteArrayReader*>(column_readers_[column_index_++].get());
+  int16_t def_level;
   int64_t values_read;
 
-  reader->ReadBatch(1, nullptr, nullptr, v, &values_read);
+  reader->ReadBatch(1, &def_level, nullptr, v, &values_read);
 
   if (values_read != 1) {
-    throw ParquetException("Failed to read value for column '" + node->name() + "'");
+    throw ParquetException("Failed to read column '" + node->name() + "'");
+  }
+}
+
+bool StreamReader::ReadOptional(FixedLenByteArray* v) {
+  const auto& node = nodes_[column_index_];
+  auto reader =
+      static_cast<FixedLenByteArrayReader*>(column_readers_[column_index_++].get());
+  int16_t def_level;
+  int64_t values_read;
+
+  reader->ReadBatch(1, &def_level, nullptr, v, &values_read);
+
+  if (values_read == 1) {
+    return true;
+  } else if (values_read == 0) {
+    return false;
+  } else {
+    throw ParquetException("Failed to read column '" + node->name() + "'");
   }
 }
 

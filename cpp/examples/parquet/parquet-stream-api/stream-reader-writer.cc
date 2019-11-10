@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "arrow/io/file.h"
+#include "arrow/util/optional.h"
 #include "parquet/exception.h"
 #include "parquet/stream_reader.h"
 #include "parquet/stream_writer.h"
@@ -102,7 +103,7 @@ std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
       parquet::ConvertedType::INT_32));
 
   fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "uint64_field", parquet::Repetition::REQUIRED, parquet::Type::INT64,
+      "uint64_field", parquet::Repetition::OPTIONAL, parquet::Type::INT64,
       parquet::ConvertedType::UINT_64));
 
   fields.push_back(parquet::schema::PrimitiveNode::Make(
@@ -123,7 +124,7 @@ std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
 }
 
 struct TestData {
-  static const int num_rows = 2000;
+  static const int num_rows = 20;
 
   static void init() { std::time(&ts_offset_); }
 
@@ -140,7 +141,10 @@ struct TestData {
   static int8_t GetInt8(const int i) { return static_cast<int8_t>((i % 256) - 128); }
   static uint16_t GetUInt16(const int i) { return static_cast<uint16_t>(i); }
   static int32_t GetInt32(const int i) { return 3 * i - 17; }
-  static uint64_t GetUInt64(const int i) { return (1ull << 40) + i * i + 101; }
+  static arrow::util::optional<uint64_t> GetUInt64(const int i) {
+    if (i % 11 == 0) return {};
+    return (1ull << 40) + i * i + 101;
+  }
   static double GetDouble(const int i) { return 6.62607004e-34 * 3e8 * i; }
   static UserTimestamp GetUserTimestamp(const int i) {
     return UserTimestamp{std::chrono::microseconds{(ts_offset_ + 3 * i) * 1000000 + i}};
@@ -178,6 +182,7 @@ void WriteParquetFile() {
   os.SetMaxRowGroupSize(1000);
 
   for (auto i = 0; i < TestData::num_rows; ++i) {
+    std::cout << "Writing row #" << i << std::endl;
     // Output string using 3 different types: std::string, arrow::util::string_view and
     // const char *.
     switch (i % 3) {
@@ -203,6 +208,9 @@ void WriteParquetFile() {
     os << TestData::GetInt8(i);
     os << TestData::GetUInt16(i);
     os << TestData::GetInt32(i);
+    if (TestData::GetUInt64(i)) {
+      std::cout << "Writing uint64: " << *TestData::GetUInt64(i) << std::endl;
+    }
     os << TestData::GetUInt64(i);
     os << TestData::GetDouble(i);
     os << TestData::GetUserTimestamp(i);
@@ -232,7 +240,7 @@ void ReadParquetFile() {
   int8_t int8;
   uint16_t uint16;
   int32_t int32;
-  uint64_t uint64;
+  arrow::util::optional<uint64_t> optional_uint64;
   double d;
   UserTimestamp ts_user;
   std::chrono::milliseconds ts_ms;
@@ -245,17 +253,23 @@ void ReadParquetFile() {
     os >> int8;
     os >> uint16;
     os >> int32;
-    os >> uint64;
+    os >> optional_uint64;
     os >> d;
     os >> ts_user;
     os >> ts_ms;
     os >> parquet::EndRow;
 
-    if (0) {
+    if (1) {
       // For debugging.
+      std::cout << "Row #" << i << std::endl;
       std::cout << s << ' ' << ch << ' ' << char_array << ' ' << int(int8) << ' '
-                << uint16 << ' ' << int32 << ' ' << uint64 << ' ' << d << ' ' << ts_user
-                << ' ' << ts_ms.count() << std::endl;
+                << uint16 << ' ' << int32;
+      if (optional_uint64) {
+        std::cout << " uint64: " << *optional_uint64;
+      } else {
+        std::cout << " uint64: N/A";
+      }
+      std::cout << ' ' << d << ' ' << ts_user << ' ' << ts_ms.count() << std::endl;
     }
     // Check data.
     switch (i % 3) {
@@ -281,7 +295,7 @@ void ReadParquetFile() {
     assert(int8 == TestData::GetInt8(i));
     assert(uint16 == TestData::GetUInt16(i));
     assert(int32 == TestData::GetInt32(i));
-    assert(uint64 == TestData::GetUInt64(i));
+    assert(optional_uint64 == TestData::GetUInt64(i));
     assert(std::abs(d - TestData::GetDouble(i)) < 1e-6);
     assert(ts_user == TestData::GetUserTimestamp(i));
     assert(ts_ms == TestData::GetChronoMilliseconds(i));
