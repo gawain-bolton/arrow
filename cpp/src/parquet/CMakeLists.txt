@@ -171,6 +171,8 @@ set(PARQUET_SRCS
     printer.cc
     schema.cc
     statistics.cc
+    stream_reader.cc
+    stream_writer.cc
     types.cc
     util/comparison.cc
     util/memory.cc)
@@ -294,6 +296,8 @@ add_parquet_test(metadata-test)
 add_parquet_test(public-api-test)
 add_parquet_test(types-test)
 add_parquet_test(reader-test)
+add_parquet_test(stream_reader_test)
+add_parquet_test(stream_writer_test)
 
 # Those tests need to use static linking as they access thrift-generated
 # symbols which are not exported by parquet.dll on Windows (PARQUET-1420).
