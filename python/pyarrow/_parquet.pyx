@@ -566,7 +566,7 @@ cdef logical_type_name_from_enum(ParquetLogicalType type_):
         ParquetLogicalType_INT_8: 'INT_8',
         ParquetLogicalType_INT_16: 'INT_16',
         ParquetLogicalType_INT_32: 'INT_32',
-        ParquetLogicalType_INT_64: 'UINT_64',
+        ParquetLogicalType_INT_64: 'INT_64',
         ParquetLogicalType_JSON: 'JSON',
         ParquetLogicalType_BSON: 'BSON',
         ParquetLogicalType_INTERVAL: 'INTERVAL',
